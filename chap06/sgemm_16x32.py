@@ -6,7 +6,7 @@
 from time import clock_gettime, CLOCK_MONOTONIC
 import numpy as np
 from PIL import Image, ImageFilter
-
+import time
 from videocore6.assembler import qpu
 from videocore6.driver import Driver
 #np.set_printoptions(threshold=1000000)
@@ -215,9 +215,9 @@ def main():
     num_thy=2
     num_qpus = num_thx*num_thy
     # C画像サイズ
-    p=160
-    q=768
-    r=2304
+    p=1024
+    q=1024
+    r=1024
     hblock=p/num_thy
     wblock=r/num_thx
     #16x16/1loop/1th
@@ -228,9 +228,9 @@ def main():
     
     with Driver() as drv:
         # params setting
-        A = drv.alloc((1, p, q), dtype='float32')
+        A = drv.alloc((p, q), dtype='float32')
         B = drv.alloc((q, r), dtype='float32')
-        C = drv.alloc((1, p, r), dtype='float32')
+        C = drv.alloc((p, r), dtype='float32')
         
         A[:] = np.random.rand(p,q)*0.1
         B[:] = np.random.rand(q,r)*0.1
@@ -238,28 +238,40 @@ def main():
         
         # uniform setting
         unif = drv.alloc(16, dtype='uint32')
-        unif[0] = A.address
-        unif[1] = A.strides[-2]  
-        unif[2] = B.address
-        unif[3] = B.strides[-2]
-        unif[4] = C.address
+        unif[0] = A.addresses()[0,0]
+        unif[1] = A.strides[0]  
+        unif[2] = B.addresses()[0,0]
+        unif[3] = B.strides[0]
+        unif[4] = C.addresses()[0,0]
         unif[5] = hblock
         unif[6] = wblock*4 #float
         unif[7] = i_idx
         unif[8] = j_idx
         unif[9] = k_idx
-        print(unif)
         code = drv.program(kernel, num_qpus=num_qpus)
+        iteration = 10
+        
         # Run the program
-        start = getsec()
-        drv.execute(code, unif.addresses()[0], thread=num_qpus)
-        time_gpu = (getsec() - start)*1000.0
-        C_ref=np.dot(A,B)
+        gpu_time = 0
+        for i in range(iteration):
+            st = time.time()
+            drv.execute(code, unif.addresses()[0], thread=num_qpus)
+            ed =time.time()
+            gpu_time += (ed-st)*1000
+
+        cpu_time = 0
+        for i in range(iteration):
+            st = time.time()
+            C_ref=np.dot(A,B)
+            ed =time.time()
+            cpu_time += (ed-st)*1000
+            
         def gflops(time):
             return p*q*r*2/(time/1000)/1024/1024/1024
         
-        print(f'QPU:   {time_gpu:.4} msec')
-        print(f'{gflops(time_gpu)}GFLOPS')
+        print(f'GPU time:   {gpu_time/iteration} msec')
+        print(f'CPU time:   {cpu_time/iteration} msec')
+        print(f'{gflops(gpu_time)}GFLOPS')
         print('minimum absolute error: {:.4e}'.format(
             float(np.min(np.abs(C_ref - C)))))
         print('maximum absolute error: {:.4e}'.format(
