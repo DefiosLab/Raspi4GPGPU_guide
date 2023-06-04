@@ -87,17 +87,38 @@ class MatMul_gpu(Layer):
             self.input_data1[...,:self.p,:self.q]=self.tensor_data[self.input_name[0]]
         if self.copy_flg2:
             self.input_data2[...,:self.q,:self.r]=self.tensor_data[self.input_name[1]]        
-        cpu_flg=False
-        if len(self.input_data1.shape)>=3:
-            if self.input_data1.shape[-3] > 1:
-                cpu_flg=True
-        if len(self.input_data2.shape)>=3:
-            if self.input_data2.shape[-3] > 1:
-                cpu_flg=True
-        if cpu_flg:
-            self.output_data = self.input_data1@self.input_data2
+
+        inp1_shape = list(self.input_data1.shape)
+        inp2_shape = list(self.input_data2.shape)
+        if len(inp1_shape) <3:
+            inp1_shape.insert(0,1)
+        if len(inp2_shape) <3:
+            inp2_shape.insert(0,1)            
+        inp1_range = range(inp1_shape[-3])
+        inp2_range = range(inp2_shape[-3])
+        max_len = max(len(inp1_range),len(inp2_range))
+        if max_len > len(inp1_range):
+            inp1_range=[0]*max_len
+        if max_len > len(inp2_range):
+            inp2_range=[0]*max_len
+        offset1=len(inp1_shape)*[0]
+        offset2=len(inp2_shape)*[0]
+        offset3=max(len(inp2_shape),len(inp1_shape))*[0]                
+        for i,j in zip(inp1_range,inp2_range):
+            offset1[-3]=i
+            offset2[-3]=j
+            offset3[-3]=max(i,j)
+            if len(self.input_data1.shape) > 2 :
+                self.unif[0] = self.input_data1.addresses()[tuple(offset1)]
+            if len(self.input_data2.shape) > 2:
+                self.unif[2] = self.input_data2.addresses()[tuple(offset2)]
+            if len(self.output_data.shape) > 2:                
+                self.unif[4] = self.output_data.addresses()[tuple(offset3)]
+            self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)
+            
         else:
             self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)
+                
         if self.p_mod > 0 or self.r_mod > 0:
             self.tensor_data[self.output_name][:]=self.output_data[...,:self.p,:self.r]
 
