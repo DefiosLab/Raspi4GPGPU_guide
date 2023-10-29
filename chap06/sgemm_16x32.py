@@ -1,10 +1,12 @@
 #coding:utf-8
+import argparse
 from time import clock_gettime, CLOCK_MONOTONIC
 import numpy as np
 from PIL import Image, ImageFilter
 import time
 from videocore6.assembler import qpu
 from videocore6.driver import Driver
+import math
 #np.set_printoptions(threshold=1000000)
 
 def getsec():
@@ -22,12 +24,12 @@ def kernel(asm, num_qpus):
     I_SIZE=7
     J_SIZE=8
     K_SIZE=9
-    I_IDX=10
-    J_IDX=11
-    k_IDX=12
-
+    FRAC_W=10
+    FRAC_H=11
+    
+    
     eidx(r0).mov(r2, 0)
-    for idx in [A_ADDR, A_STR, B_ADDR, B_STR, C_ADDR, HBLOCK, WBLOCK, I_SIZE, J_SIZE, K_SIZE]:
+    for idx in [A_ADDR, A_STR, B_ADDR, B_STR, C_ADDR, HBLOCK, WBLOCK, I_SIZE, J_SIZE, K_SIZE, FRAC_W, FRAC_H]:
         nop(sig=ldunifrf(r5))
         sub(null, r0, idx, cond='pushz')
         mov(r2, r5, cond='ifa')
@@ -51,18 +53,31 @@ def kernel(asm, num_qpus):
     eidx(r4)
     sub(r1,r0,4,cond='pushn')
     mov(r1,r0,cond='ifa')
-    rotate(broadcast,r2,-WBLOCK)
-    umul24(r1,r5,r1)
+    rotate(broadcast,r2,-WBLOCK)    
+    umul24(r3,r5,r1)
+
+    #端数処理
+    rotate(broadcast,r2,-FRAC_W)
+    sub(null,r1,3,cond='pushz')
+    sub(r3,r3,r5, cond='ifa')
+    mov(r1,r3)
+    
     sub(null, r4, B_ADDR, cond='pushz')
     add(r2, r2, r1, cond='ifa')    
 
-    
+
+
+        
     #numqpu%4
     #A set
     
     shr(r3,r0,2)
     rotate(broadcast,r2,-HBLOCK)
-    umul24(r3,r5,r3)
+    mov(r0,r5)
+    rotate(broadcast,r2,-FRAC_H)
+    sub(r0,r0,r5)
+    
+    umul24(r3,r0,r3)
     rotate(broadcast,r2,-B_STR) #for C
     umul24(r0,r3,r5)
     
@@ -74,7 +89,8 @@ def kernel(asm, num_qpus):
     #C set
     add(r1,r1,r0)
     sub(null, r4, C_ADDR, cond='pushz')
-    add(r2, r2, r1, cond='ifa')        
+    add(r2, r2, r1, cond='ifa')
+    
     iidx=rf50
     jidx=rf51
     kidx=rf52
@@ -101,8 +117,26 @@ def kernel(asm, num_qpus):
         # mov(r0,1)
         # shl(r0,r0,4)
         umul24(r0,ldi16,iidx)
+
+        #端数処理 
+        # if HBLOCK - i * 16 < 0:
+        #     i - (16 + (HBLOCK - i*16))        
+        add(r1,r0,ldi16)
+        rotate(broadcast,r2,-HBLOCK)        
+        sub(r1,r5,r1,cond = 'pushn')
+        b(R.fraction_i_end,cond='anyna')
+        mov(r1,0) #nop
+        eidx(a_cur) #nop
+        rotate(broadcast,r2,-A_STR) #nop
+
+        add(r0,r0,r1)
         eidx(a_cur)
         rotate(broadcast,r2,-A_STR)
+        
+        L.fraction_i_end
+        
+        # eidx(a_cur)
+        # rotate(broadcast,r2,-A_STR) 
         umul24(a_cur,a_cur,r5)
         umul24(r0,r5,r0)
         add(a_cur,a_cur,r0)
@@ -114,10 +148,27 @@ def kernel(asm, num_qpus):
             #1 : 32 x 4(float) x jidx
             umul24(r0,ldi128,jidx)
 
-
-            #2 : eidx x 4 + B_ADDR
+            # if WBLOCK - j * 32 * 4(bytes) < 0:
+            #     r0 - (128 + (WBLOCK - j * 128)
+            add(r3,r0,ldi128)
+            rotate(broadcast,r2,-WBLOCK)
+            sub(r3,r5,r3,cond = 'pushn')
+            b(R.fraction_j_end,cond='anyna')
             mov(kidx,0)
             eidx(b_cur)
+            mov(rf49,0)
+
+        
+            add(r0,r0,r3)
+            mov(rf49,r3)
+            mov(kidx,0)
+            eidx(b_cur)
+
+            L.fraction_j_end
+            
+            #2 : eidx x 4 + B_ADDR
+            # mov(kidx,0)
+            # eidx(b_cur)
             shl(b_cur,b_cur,2)
             rotate(broadcast,r2,-B_ADDR)
             add(b_cur,b_cur,r5)
@@ -161,15 +212,20 @@ def kernel(asm, num_qpus):
             eidx(c_cur)
             rotate(broadcast,r2,-B_STR)
             umul24(c_cur,c_cur,r5)
+            umul24(r1,r1,r5) # 端数処理
+            
             umul24(r0,r5,r0)
             add(c_cur,c_cur,r0)
             
             # mov(r0,1)
             # shl(r0,r0,7)
-            umul24(r0,ldi128,jidx)            
+            umul24(r0,ldi128,jidx)
+            add(r0,r0,rf49)
             rotate(broadcast,r2,-C_ADDR)
             add(c_cur,c_cur,r5)
             add(c_cur,c_cur,r0)
+            add(c_cur,c_cur,r1) #端数処理
+
             for li in range(32):
                 # fmul(r3,r3,2.0)
                 # mov(tmud,r3)
@@ -205,24 +261,49 @@ def kernel(asm, num_qpus):
     nop()
     nop()
 def main():
-    num_thx=4
-    num_thy=2    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--p', help='p size',type=int,default=1024)
+    parser.add_argument('--q', help='q size',type=int,default=1024)
+    parser.add_argument('--r', help='r size',type=int,default=1024)
+    args = parser.parse_args()
+    p=args.p
+    q=args.q
+    r=args.r
+    
+    if p < 32 or r < 128:
+        num_thx = 1
+        num_thy = 1
+    else:
+        num_thx=4
+        num_thy=2
+
+    assert p >= 16 and r >= 32, "The matrix size must satisfy p <= 16 and r <= 32."
     num_qpus = num_thx*num_thy
-    # C画像サイズ
-    p=1024
-    q=1024
-    r=1024
-    hblock=p/num_thy
-    wblock=r/num_thx
-    #16x16/1loop/1th
-    j_idx=wblock/32
-    i_idx=hblock/16
+    
+    
+    #1スレッドが処理する範囲
+    hblock=int(math.ceil(p/num_thy))
+    wblock=int(math.ceil(r/num_thx))
+
+    #スレッド分割の端数
+    #GPUカーネル内で以下の処理を行う
+    # if thread_id.x == 3:
+    #     WBLOCK = WBLOCK - frac_w
+    # if thread_id.y == 1:
+    #     HBLOCK = HBLOCK - frac_h
+    frac_w = (wblock * num_thx - r) * 4
+    frac_h = (hblock * num_thy - p)
+
+    #ループ回数
+    j_idx=int(math.ceil(r / (32.0 * num_thx)))
+    i_idx=int(math.ceil(p / (16.0 * num_thy)))
     k_idx=q
 
+    wblock = int(wblock * 4) #float = 4bytes
     
     with Driver(data_area_size=1024*1024*1024+1024*1024*512) as drv:
         
-        # params setting
+        #メモリ確保
         A = drv.alloc((p, q), dtype='float32')
         B = drv.alloc((q, r), dtype='float32')
         C = drv.alloc((p, r), dtype='float32')
@@ -230,9 +311,7 @@ def main():
         A[:] = np.random.rand(p,q)*0.1
         B[:] = np.random.rand(q,r)*0.1
         C[:] = 0
-
-        # A[:]=np.arange(A.size).reshape(A.shape)
-        # B[:]=np.arange(B.size).reshape(B.shape)        
+        
         # uniform setting
         unif = drv.alloc(16, dtype='uint32')
         unif[0] = A.addresses()[0,0]
@@ -241,12 +320,15 @@ def main():
         unif[3] = B.strides[0]
         unif[4] = C.addresses()[0,0]
         unif[5] = hblock
-        unif[6] = wblock*4 #float
+        unif[6] = wblock
         unif[7] = i_idx
         unif[8] = j_idx
         unif[9] = k_idx
+        unif[10] = frac_w
+        unif[11] = frac_h
         code = drv.program(kernel, num_qpus=num_qpus)
-        iteration = 10
+        iteration = 1
+        
         # Run the program
         gpu_time = 0
         for i in range(iteration):
