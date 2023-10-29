@@ -4,7 +4,7 @@ import time
 import numpy as np
 from videocore6.driver import Driver
 class Inf:
-    def __init__(self,model,use_gpu=False,input_shape=None):
+    def __init__(self,model,use_gpu=False):
         # self.model=model
         self.model = shape_inference.infer_shapes(model)
         self.tensor_data={}
@@ -13,15 +13,12 @@ class Inf:
 
         #Weightを格納
         self.tensor_data.update({initializer.name: numpy_helper.to_array(initializer) for initializer in self.model.graph.initializer})
-        self.create_layer()
-        
-        if use_gpu:
-            assert input_shape is not None, "Error:Please input the shape of the dummy input."
-            self.alloc_gpu(input_shape)
-            self.create_layer(use_gpu)
+        self.create_layer(use_gpu)
         
     def create_layer(self,use_gpu=False):
         self.layer=[]
+        if use_gpu:
+            self.alloc_gpu()        
         for node in self.model.graph.node:
             #対応する層のインスタンスを作成
             if use_gpu:
@@ -78,10 +75,9 @@ class Inf:
                     
         return shape_tuple,dtype
     
-    def alloc_gpu(self,input_shape):
+    def alloc_gpu(self):
         print("Allocating GPU memory...")
         self.drv = Driver(data_area_size=1024*1024*1024+1024*1024*512)
-        dammy_inp = np.random.rand(*input_shape).astype(np.float32)
         for node in self.model.graph.node:
             for output_name in node.output:
                 shape,dtype = self.search_tensorinfo(output_name)
@@ -104,6 +100,7 @@ class Inf:
             ed = time.time()
             self.time_dict[self.model.graph.node[i].op_type]+=ed-st
         if profile:
+            max_length = max(len(key) for key in self.time_dict.keys())
             for k,v in  self.time_dict.items():
-                print("{}:{:.2f}msec".format(k,v*1000))
+                print("{}:{:.2f}msec".format(k.ljust(max_length),v*1000))
         return self.tensor_data[self.model.graph.output[0].name]
