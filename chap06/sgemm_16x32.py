@@ -220,7 +220,8 @@ def main():
     k_idx=q
 
     
-    with Driver() as drv:
+    with Driver(data_area_size=1024*1024*1024+1024*1024*512) as drv:
+        
         # params setting
         A = drv.alloc((p, q), dtype='float32')
         B = drv.alloc((q, r), dtype='float32')
@@ -246,7 +247,6 @@ def main():
         unif[9] = k_idx
         code = drv.program(kernel, num_qpus=num_qpus)
         iteration = 10
-        print(unif)
         # Run the program
         gpu_time = 0
         for i in range(iteration):
@@ -254,8 +254,8 @@ def main():
             st = time.time()
             drv.execute(code, unif.addresses()[0], thread=num_qpus)
             ed =time.time()
-            gpu_time += (ed-st)*1000
-
+            gpu_time += ed-st
+        average_gpu_time = gpu_time / iteration
 
         
         cpu_time = 0
@@ -263,15 +263,14 @@ def main():
             st = time.time()
             C_ref=np.dot(A,B)
             ed =time.time()
-            cpu_time += (ed-st)*1000
-        print(C)
-        print(C_ref)
+            cpu_time += ed-st
+        average_cpu_time = cpu_time /iteration
             
         def gflops(time):
-            return p*q*r*2/(time/1000)/1024/1024/1024
+            return p * q * r * 2 / average_gpu_time * 1e-9
         
-        print(f'GPU time:   {gpu_time/iteration} msec')
-        print(f'CPU time:   {cpu_time/iteration} msec')
+        print(f'GPU time:   {average_gpu_time*1000} msec')
+        print(f'CPU time:   {average_cpu_time*1000} msec')
         print(f'{gflops(gpu_time)}GFLOPS')
         print('minimum absolute error: {:.4e}'.format(
             float(np.min(np.abs(C_ref - C)))))
