@@ -76,7 +76,6 @@ class Inf:
         return shape_tuple,dtype
     
     def alloc_gpu(self):
-        print("Allocating GPU memory...")
         self.drv = Driver(data_area_size=1024*1024*1024+1024*1024*512)
         for node in self.model.graph.node:
             for output_name in node.output:
@@ -84,7 +83,6 @@ class Inf:
                 self.tensor_data[output_name] = self.drv.alloc(shape,dtype=dtype)
         shape,dtype = self.search_tensorinfo(self.model.graph.input[0].name)
         self.tensor_data[self.model.graph.input[0].name]=self.drv.alloc(shape,dtype=dtype)
-        print("OK!")
     def set_input(self,input_data):
         if self.model.graph.input[0].name in self.tensor_data:
             self.tensor_data[self.model.graph.input[0].name][:]=input_data
@@ -101,6 +99,7 @@ class Inf:
             self.time_dict[self.model.graph.node[i].op_type]+=ed-st
         if profile:
             max_length = max(len(key) for key in self.time_dict.keys())
+            print("Processing time for each layer")
             for k,v in  self.time_dict.items():
                 print("{}:{:.2f}msec".format(k.ljust(max_length),v*1000))
         return self.tensor_data[self.model.graph.output[0].name]
