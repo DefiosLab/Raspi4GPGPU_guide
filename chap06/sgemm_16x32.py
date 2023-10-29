@@ -265,11 +265,12 @@ def main():
     parser.add_argument('--p', help='p size',type=int,default=1024)
     parser.add_argument('--q', help='q size',type=int,default=1024)
     parser.add_argument('--r', help='r size',type=int,default=1024)
+    parser.add_argument('--iteration', help='Number of iterations（for evaluation of processing time)',type=int,default=1)    
     args = parser.parse_args()
     p=args.p
     q=args.q
     r=args.r
-    
+    iteration = args.iteration    
     if p < 32 or r < 128:
         num_thx = 1
         num_thy = 1
@@ -327,7 +328,7 @@ def main():
         unif[10] = frac_w
         unif[11] = frac_h
         code = drv.program(kernel, num_qpus=num_qpus)
-        iteration = 1
+
         
         # Run the program
         gpu_time = 0
@@ -351,9 +352,9 @@ def main():
         def gflops(time):
             return p * q * r * 2 / average_gpu_time * 1e-9
         
-        print(f'GPU time:   {average_gpu_time*1000} msec')
-        print(f'CPU time:   {average_cpu_time*1000} msec')
-        print(f'{gflops(gpu_time)}GFLOPS')
+        print(f'GPU time:   {average_gpu_time*1000:.2f} msec')
+        print(f'CPU time:   {average_cpu_time*1000:.2f} msec')
+        print(f'{gflops(gpu_time):.2f}GFLOPS')
         print('minimum absolute error: {:.4e}'.format(
             float(np.min(np.abs(C_ref - C)))))
         print('maximum absolute error: {:.4e}'.format(
