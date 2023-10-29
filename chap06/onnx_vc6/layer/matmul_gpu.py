@@ -47,8 +47,24 @@ class MatMul_gpu(Layer):
         j_idx=int(math.ceil(self.r / (32.0 * num_thx)))
         i_idx=int(math.ceil(self.p / (16.0 * num_thy)))
         k_idx=self.q
-        wblock = int(wblock * 4) #float = 4bytes
+        
+        #3次元対応
+        # inp1_shape = list(self.input_data1.shape)
+        # data2_shape = list(self.input_data2.shape)
+        if len(data1_shape) <3:
+            data1_shape.insert(0,1)
+        if len(data2_shape) <3:
+            data2_shape.insert(0,1)            
+        inp1_range = range(data1_shape[-3])
+        inp2_range = range(data2_shape[-3])
+        c1 = data1_shape[-3]
+        c2 = data2_shape[-3]
+        c_idx = max(c1,c2)
+        inp1_size = self.p * self.q * 4 if c1 > 1 else 0
+        inp2_size = self.q * self.r * 4 if c2 > 1 else 0
+        out_size = self.p * self.r * 4 
 
+        wblock = int(wblock * 4) #float = 4bytes
         self.output_data[:]=0
         self.unif = self.drv.alloc(16, dtype='uint32')
         self.unif[0] = self.input_data1.address
@@ -62,62 +78,18 @@ class MatMul_gpu(Layer):
         self.unif[8] = j_idx
         self.unif[9] = k_idx
         self.unif[10] = frac_w
-        self.unif[11] = frac_h        
+        self.unif[11] = frac_h
+        self.unif[12] = inp1_size
+        self.unif[13] = inp2_size
+        self.unif[14] = out_size
+        self.unif[15] = c_idx
         self.code = self.drv.program(kernel, num_qpus=self.num_qpus)        
             
     def run(self):
-        # if self.copy_flg1:
-        #     self.input_data1[...,:self.p,:self.q]=self.tensor_data[self.input_name[0]]
-        # if self.copy_flg2:
-        #     self.input_data2[...,:self.q,:self.r]=self.tensor_data[self.input_name[1]]        
-
-        # inp1_shape = list(self.input_data1.shape)
-        # inp2_shape = list(self.input_data2.shape)
-        # if len(inp1_shape) <3:
-        #     inp1_shape.insert(0,1)
-        # if len(inp2_shape) <3:
-        #     inp2_shape.insert(0,1)            
-        # inp1_range = range(inp1_shape[-3])
-        # inp2_range = range(inp2_shape[-3])
-        # max_len = max(len(inp1_range),len(inp2_range))
-        # if max_len > len(inp1_range):
-        #     inp1_range=[0]*max_len
-        # if max_len > len(inp2_range):
-        #     inp2_range=[0]*max_len
-        # offset1=len(inp1_shape)*[0]
-        # offset2=len(inp2_shape)*[0]
-        # offset3=max(len(inp2_shape),len(inp1_shape))*[0]
-        # print(self.input_name[0])
-        #3次元対応
-        inp1_shape = list(self.input_data1.shape)
-        inp2_shape = list(self.input_data2.shape)
-        if len(inp1_shape) <3:
-            inp1_shape.insert(0,1)
-        if len(inp2_shape) <3:
-            inp2_shape.insert(0,1)            
-        inp1_range = range(inp1_shape[-3])
-        inp2_range = range(inp2_shape[-3])
-        offset1=len(inp1_shape)*[0]
-        offset2=len(inp2_shape)*[0]
-        offset3=max(len(inp2_shape),len(inp1_shape))*[0]             
-        for i,j in zip(inp1_range,inp2_range):
-            offset1[-3]=i
-            offset2[-3]=j
-            offset3[-3]=max(i,j)
-            if len(self.input_data1.shape) > 2 :
-                self.unif[0] = self.input_data1.addresses()[tuple(offset1)]
-            if len(self.input_data2.shape) > 2:
-                self.unif[2] = self.input_data2.addresses()[tuple(offset2)]
-            if len(self.output_data.shape) > 2:                
-                self.unif[4] = self.output_data.addresses()[tuple(offset3)]
-            self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)
-        else:
-            self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)        
-            
+        self.drv.execute(self.code, self.unif.addresses()[0], timeout_sec=100, thread=self.num_qpus)
         # gpu = self.output_data
         # cpu = self.input_data1@self.input_data2
         # print('maximum relative error : {:.4e}'.format(float(np.max(np.abs(cpu-gpu)/np.maximum(np.abs(cpu),1e-10)))))        
-        # self.tensor_data[self.output_name][:] = gpu[...,:self.p,:self.r]
 
 
 
@@ -131,76 +103,23 @@ def kernel(asm, num_qpus):
     C_ADDR=4
     HBLOCK=5
     WBLOCK=6
-    I_SIZE=7
-    J_SIZE=8
-    K_SIZE=9
+    LOOP_I=7
+    LOOP_J=8
+    LOOP_K=9
     FRAC_W=10
     FRAC_H=11
-    
+    A_SIZE=12
+    B_SIZE=13
+    C_SIZE=14
+    LOOP_CH=15
     
     eidx(r0).mov(r2, 0)
-    for idx in [A_ADDR, A_STR, B_ADDR, B_STR, C_ADDR, HBLOCK, WBLOCK, I_SIZE, J_SIZE, K_SIZE, FRAC_W, FRAC_H]:
+    for idx in [A_ADDR, A_STR, B_ADDR, B_STR, C_ADDR, HBLOCK, WBLOCK, LOOP_I, LOOP_J, LOOP_K, FRAC_W, FRAC_H, A_SIZE, B_SIZE, C_SIZE, LOOP_CH]:
         nop(sig=ldunifrf(r5))
         sub(null, r0, idx, cond='pushz')
         mov(r2, r5, cond='ifa')
-        
-    if num_qpus == 1:
-        mov(r0, 0)
-    elif num_qpus == 8:
-        tidx(r0)
-        shr(r0, r0, 2)
-        band(r0, r0, 0b1111)
-    else:
-        raise Exception('num_qpus must be 1 or 8')
-    
-    for i in range(64):
-        mov(rf[i],0.0)
-    #=======numqpu=8 to  thx=4========
-    #                   thy=2
-    #if(thx-4>=0){thx-=4}
-    #B set
-    
-    eidx(r4)
-    sub(r1,r0,4,cond='pushn')
-    mov(r1,r0,cond='ifa')
-    rotate(broadcast,r2,-WBLOCK)    
-    umul24(r3,r5,r1)
 
-    #端数処理
-    rotate(broadcast,r2,-FRAC_W)
-    sub(null,r1,3,cond='pushz')
-    sub(r3,r3,r5, cond='ifa')
-    mov(r1,r3)
-    
-    sub(null, r4, B_ADDR, cond='pushz')
-    add(r2, r2, r1, cond='ifa')    
-
-
-
-        
-    #numqpu%4
-    #A set
-    
-    shr(r3,r0,2)
-    rotate(broadcast,r2,-HBLOCK)
-    mov(r0,r5)
-    rotate(broadcast,r2,-FRAC_H)
-    sub(r0,r0,r5)
-    
-    umul24(r3,r0,r3)
-    rotate(broadcast,r2,-B_STR) #for C
-    umul24(r0,r3,r5)
-    
-    rotate(broadcast,r2,-A_STR) #for A
-    umul24(r3,r5,r3)
-    sub(null, r4, A_ADDR, cond='pushz')
-    add(r2, r2, r3, cond='ifa')    
-
-    #C set
-    add(r1,r1,r0)
-    sub(null, r4, C_ADDR, cond='pushz')
-    add(r2, r2, r1, cond='ifa')
-    
+    cidx=rf49
     iidx=rf50
     jidx=rf51
     kidx=rf52
@@ -212,153 +131,240 @@ def kernel(asm, num_qpus):
     simd_stp=rf58
     ldi128=rf59
     ldi16=rf60
-    mov(ldi128,1)
-    shl(ldi128,ldi128,7)
-    mov(ldi16,1)
-    shl(ldi16,ldi16,4)
-    #simd_stp = 16 x 4
-    mov(simd_stp,1)
-    shl(simd_stp,simd_stp,6)
-    mov(iidx,0)
-
-    with loop as iloop:
-        #set a_cur
-        #16 x iidx x A_STR x eidx + A_ADDR
-        # mov(r0,1)
-        # shl(r0,r0,4)
-        umul24(r0,ldi16,iidx)
-
-        #端数処理 
-        # if HBLOCK - i * 16 < 0:
-        #     i - (16 + (HBLOCK - i*16))        
-        add(r1,r0,ldi16)
-        rotate(broadcast,r2,-HBLOCK)        
-        sub(r1,r5,r1,cond = 'pushn')
-        b(R.fraction_i_end,cond='anyna')
-        mov(r1,0) #nop
-        eidx(a_cur) #nop
-        rotate(broadcast,r2,-A_STR) #nop
-
-        add(r0,r0,r1)
-        eidx(a_cur)
-        rotate(broadcast,r2,-A_STR)
         
-        L.fraction_i_end
         
-        # eidx(a_cur)
-        # rotate(broadcast,r2,-A_STR) 
-        umul24(a_cur,a_cur,r5)
-        umul24(r0,r5,r0)
-        add(a_cur,a_cur,r0)
-        rotate(broadcast,r2,-A_ADDR)
-        add(a_cur,a_cur,r5)
-        mov(jidx,0)
-        with loop as jloop:
-            #set b_cur
-            #1 : 32 x 4(float) x jidx
-            umul24(r0,ldi128,jidx)
+    if num_qpus == 1:
+        mov(r0, 0)
+    elif num_qpus == 8:
+        tidx(r0)
+        shr(r0, r0, 2)
+        band(r0, r0, 0b1111)
+    else:
+        raise Exception('num_qpus must be 1 or 8')
 
-            # if WBLOCK - j * 32 * 4(bytes) < 0:
-            #     r0 - (128 + (WBLOCK - j * 128)
-            add(r3,r0,ldi128)
-            rotate(broadcast,r2,-WBLOCK)
-            sub(r3,r5,r3,cond = 'pushn')
-            b(R.fraction_j_end,cond='anyna')
-            mov(kidx,0)
-            eidx(b_cur)
-            mov(rf49,0)
+    for i in range(64):
+        mov(rf[i],0.0)
+    #=======numqpu=8 to  thx=4========
+    #                   thy=2
+    #if(thx-4>=0){thx-=4}
+    #B set
+
+    eidx(r4)
+    sub(r1,r0,4,cond='pushn')
+    mov(r1,r0,cond='ifa')
+    rotate(broadcast,r2,-WBLOCK)    
+    umul24(r3,r5,r1)
+
+    #端数処理
+    rotate(broadcast,r2,-FRAC_W)
+    sub(null,r1,3,cond='pushz')
+    sub(r3,r3,r5, cond='ifa')
+    mov(r1,r3)
+
+    sub(null, r4, B_ADDR, cond='pushz')
+    add(r2, r2, r1, cond='ifa')    
+
+
+
+
+    #numqpu%4
+    #A set
+
+    shr(r3,r0,2)
+    rotate(broadcast,r2,-HBLOCK)
+    mov(r0,r5)
+    rotate(broadcast,r2,-FRAC_H)
+    sub(r0,r0,r5)
+
+    umul24(r3,r0,r3)
+    rotate(broadcast,r2,-B_STR) #for C
+    umul24(r0,r3,r5)
+
+    rotate(broadcast,r2,-A_STR) #for A
+    umul24(r3,r5,r3)
+    sub(null, r4, A_ADDR, cond='pushz')
+    add(r2, r2, r3, cond='ifa')    
+
+    #C set
+    add(r1,r1,r0)
+    sub(null, r4, C_ADDR, cond='pushz')
+    add(r2, r2, r1, cond='ifa')
+
+
+    mov(cidx,0)
+    with loop as cloop:
 
         
-            add(r0,r0,r3)
-            mov(rf49,r3)
-            mov(kidx,0)
-            eidx(b_cur)
 
-            L.fraction_j_end
-            
-            #2 : eidx x 4 + B_ADDR
-            # mov(kidx,0)
-            # eidx(b_cur)
-            shl(b_cur,b_cur,2)
-            rotate(broadcast,r2,-B_ADDR)
-            add(b_cur,b_cur,r5)
+        mov(ldi128,1)
+        shl(ldi128,ldi128,7)
+        mov(ldi16,1)
+        shl(ldi16,ldi16,4)
+        #simd_stp = 16 x 4
+        mov(simd_stp,1)
+        shl(simd_stp,simd_stp,6)
+        mov(iidx,0)
 
-            #1 + 2
-            add(b_cur,b_cur,r0)
-
-            with loop as kloop:
-                mov(tmua,a_cur,sig=thrsw)
-                add(a_cur,a_cur,4) #nop()
-                add(kidx,kidx,1) #nop()
-                nop(sig=ldtmu(r3))
-                for lj in range(2):
-                    stp = lj*16
-                    mov(tmua,b_cur,sig=thrsw)
-                    if lj==0:
-                        add(b_cur,b_cur,simd_stp) #nop()
-                    else:
-                        nop()
-                    nop()
-                    nop(sig=ldtmu(r4))
-                    rotate(broadcast,r4,0)
-                    fmul(r0,r5,r3)                    
-                    for li in range(15):
-                        rotate(broadcast,r4,-(li+1))
-                        fadd(rf[stp+li],rf[stp+li],r0).fmul(r0,r5,r3)
-                    fadd(rf[stp+15],rf[stp+15],r0)
-                
-
-                rotate(broadcast,r2,-K_SIZE)
-                sub(null,r5,kidx,cond='pushz')
-                kloop.b(cond='anyna')
-                sub(b_cur,b_cur,simd_stp) #nop()
-                rotate(broadcast,r2,-B_STR) #nop()
-                add(b_cur,b_cur,r5) #nop() 
-
-            # 32 x 4(float) x jidx
+        with loop as iloop:
+            #set a_cur
+            #16 x iidx x A_STR x eidx + A_ADDR
             # mov(r0,1)
             # shl(r0,r0,4)
             umul24(r0,ldi16,iidx)
-            eidx(c_cur)
-            rotate(broadcast,r2,-B_STR)
-            umul24(c_cur,c_cur,r5)
-            umul24(r1,r1,r5) # 端数処理
-            
-            umul24(r0,r5,r0)
-            add(c_cur,c_cur,r0)
-            
-            # mov(r0,1)
-            # shl(r0,r0,7)
-            umul24(r0,ldi128,jidx)
-            add(r0,r0,rf49)
-            rotate(broadcast,r2,-C_ADDR)
-            add(c_cur,c_cur,r5)
-            add(c_cur,c_cur,r0)
-            add(c_cur,c_cur,r1) #端数処理
 
-            for li in range(32):
-                # fmul(r3,r3,2.0)
-                # mov(tmud,r3)
-                mov(tmud,rf[li])
-                mov(tmua,c_cur)
-                add(c_cur,c_cur,4)
-                mov(rf[li],0.0)
-                tmuwt()
-            rotate(broadcast,r2,-J_SIZE)
-            add(jidx,jidx,1)
-            sub(null,r5,jidx,cond = 'pushz')
-            jloop.b(cond='anyna')
-            rotate(broadcast,r2,-A_STR) #nop()
-            sub(a_cur,a_cur,r5) #nop()
+            #端数処理 
+            # if HBLOCK - i * 16 < 0:
+            #     i - (16 + (HBLOCK - i*16))        
+            add(r1,r0,ldi16)
+            rotate(broadcast,r2,-HBLOCK)        
+            sub(r1,r5,r1,cond = 'pushn')
+            b(R.fraction_i_end,cond='anyna')
+            mov(r1,0) #nop
+            eidx(a_cur) #nop
+            rotate(broadcast,r2,-A_STR) #nop
+
+            add(r0,r0,r1)
+            eidx(a_cur)
+            rotate(broadcast,r2,-A_STR)
+
+            L.fraction_i_end
+
+            # eidx(a_cur)
+            # rotate(broadcast,r2,-A_STR) 
+            umul24(a_cur,a_cur,r5)
+            umul24(r0,r5,r0)
+            add(a_cur,a_cur,r0)
+            rotate(broadcast,r2,-A_ADDR)
+            add(a_cur,a_cur,r5)
+            mov(jidx,0)
+            with loop as jloop:
+                #set b_cur
+                #1 : 32 x 4(float) x jidx
+                umul24(r0,ldi128,jidx)
+
+                # if WBLOCK - j * 32 * 4(bytes) < 0:
+                #     r0 - (128 + (WBLOCK - j * 128)
+                add(r3,r0,ldi128)
+                rotate(broadcast,r2,-WBLOCK)
+                sub(r3,r5,r3,cond = 'pushn')
+                b(R.fraction_j_end,cond='anyna')
+                mov(kidx,0)
+                eidx(b_cur)
+                mov(rf48,0)
+
+
+                add(r0,r0,r3)
+                mov(rf48,r3)
+                mov(kidx,0)
+                eidx(b_cur)
+
+                L.fraction_j_end
+
+                #2 : eidx x 4 + B_ADDR
+                # mov(kidx,0)
+                # eidx(b_cur)
+                shl(b_cur,b_cur,2)
+                rotate(broadcast,r2,-B_ADDR)
+                add(b_cur,b_cur,r5)
+
+                #1 + 2
+                add(b_cur,b_cur,r0)
+
+                with loop as kloop:
+                    mov(tmua,a_cur,sig=thrsw)
+                    add(a_cur,a_cur,4) #nop()
+                    add(kidx,kidx,1) #nop()
+                    nop(sig=ldtmu(r3))
+                    for lj in range(2):
+                        stp = lj*16
+                        mov(tmua,b_cur,sig=thrsw)
+                        if lj==0:
+                            add(b_cur,b_cur,simd_stp) #nop()
+                        else:
+                            nop()
+                        nop()
+                        nop(sig=ldtmu(r4))
+                        rotate(broadcast,r4,0)
+                        fmul(r0,r5,r3)                    
+                        for li in range(15):
+                            rotate(broadcast,r4,-(li+1))
+                            fadd(rf[stp+li],rf[stp+li],r0).fmul(r0,r5,r3)
+                        fadd(rf[stp+15],rf[stp+15],r0)
+
+
+                    rotate(broadcast,r2,-LOOP_K)
+                    sub(null,r5,kidx,cond='pushz')
+                    kloop.b(cond='anyna')
+                    sub(b_cur,b_cur,simd_stp) #nop()
+                    rotate(broadcast,r2,-B_STR) #nop()
+                    add(b_cur,b_cur,r5) #nop() 
+
+                # 32 x 4(float) x jidx
+                # mov(r0,1)
+                # shl(r0,r0,4)
+                umul24(r0,ldi16,iidx)
+                eidx(c_cur)
+                rotate(broadcast,r2,-B_STR)
+                umul24(c_cur,c_cur,r5)
+                umul24(r1,r1,r5) # 端数処理
+
+                umul24(r0,r5,r0)
+                add(c_cur,c_cur,r0)
+
+                # mov(r0,1)
+                # shl(r0,r0,7)
+                umul24(r0,ldi128,jidx)
+                add(r0,r0,rf48)
+                rotate(broadcast,r2,-C_ADDR)
+                add(c_cur,c_cur,r5)
+                add(c_cur,c_cur,r0)
+                add(c_cur,c_cur,r1) #端数処理
+
+                for li in range(32):
+                    # fmul(r3,r3,2.0)
+                    # mov(tmud,r3)
+                    mov(tmud,rf[li])
+                    mov(tmua,c_cur)
+                    add(c_cur,c_cur,4)
+                    mov(rf[li],0.0)
+                    tmuwt()
+                rotate(broadcast,r2,-LOOP_J)
+                add(jidx,jidx,1)
+                sub(null,r5,jidx,cond = 'pushz')
+                jloop.b(cond='anyna')
+                rotate(broadcast,r2,-A_STR) #nop()
+                sub(a_cur,a_cur,r5) #nop()
+                nop()
+            add(iidx,iidx,1)
+            rotate(broadcast,r2,-LOOP_I)
+            sub(null,r5,iidx,cond = 'pushz')
+            iloop.b(cond='anyna')
             nop()
-        add(iidx,iidx,1)
-        rotate(broadcast,r2,-I_SIZE)
-        sub(null,r5,iidx,cond = 'pushz')
-        iloop.b(cond='anyna')
-        nop()
-        nop()
-        nop()
+            nop()
+            nop()
+
+            
+        eidx(r0)
+        rotate(broadcast,r2,-A_SIZE)
+        sub(null, r0, A_ADDR, cond='pushz')
+        add(r2, r2, r5, cond='ifa')
+
+        rotate(broadcast,r2,-B_SIZE)
+        sub(null, r0, B_ADDR, cond='pushz')
+        add(r2, r2, r5, cond='ifa')
+
+        rotate(broadcast,r2,-C_SIZE)
+        sub(null, r0, C_ADDR, cond='pushz')
+        add(r2, r2, r5, cond='ifa')
         
+        add(cidx,cidx,1)
+        rotate(broadcast,r2,-LOOP_CH)
+        sub(null,r5,cidx,cond = 'pushz')
+        cloop.b(cond='anyna')
+        nop()
+        nop()
+        nop()
+
     barrierid(syncb, sig=thrsw)
     nop()
     nop()
