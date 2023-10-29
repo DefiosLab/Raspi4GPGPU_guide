@@ -1,4 +1,4 @@
-import onnx_vc6
+import vit_for_vc6
 import onnxruntime
 import onnx
 import numpy as np
@@ -31,8 +31,8 @@ model = onnx.load(model_path)
 img = cv2.imread('Parrots.jpg')
 img = preprocess(img)
 
-#onnx_vc6
-ov_engine = onnx_vc6.Inf(model,use_gpu=True,input_shape=img.shape)
+#vit_for_vc6
+ov_engine = vit_for_vc6.Inf(model,use_gpu=True)
 
 #onnxruntime
 session = onnxruntime.InferenceSession(model_path)
@@ -44,7 +44,7 @@ result_ort = session.run(None, {input_name: img})[0]
 ed = time.time()
 ort_time=ed-st
 
-#onnx_vc6での推論
+#vit_for_vc6での推論
 st = time.time()
 result_ov = ov_engine.run(img,profile=True)
 ed = time.time()
