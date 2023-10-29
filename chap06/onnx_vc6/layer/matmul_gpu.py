@@ -83,36 +83,47 @@ class MatMul_gpu(Layer):
         self.code = self.drv.program(kernel, num_qpus=self.num_qpus)        
             
     def run(self):
-        # if len(self.input_data1.shape)>=3:
-        #     if self.input_data1.shape[-3] > 1:
-        #         input_data1 = self.tensor_data[self.input_name[0]] 
-        #         input_data2 = self.tensor_data[self.input_name[1]] 
-        #         output = input_data1 @ input_data2
-        #         if self.use_gpu:
-        #             self.tensor_data[self.output_name][:]=output
-        #             return
-        #         else:
-        #             self.tensor_data[self.output_name]=output
-        #             return 
         if self.copy_flg1:
             self.input_data1[...,:self.p,:self.q]=self.tensor_data[self.input_name[0]]
         if self.copy_flg2:
-            self.input_data2[...,:self.q,:self.r]=self.tensor_data[self.input_name[1]]
-        print(self.input_data1.shape,self.input_data2.shape)
-        print(self.unif)
-        # self.input_data1[:]=1
-        # self.input_data2[:]=1
-        self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)
-        cpu = self.input_data1@self.input_data2
+            self.input_data2[...,:self.q,:self.r]=self.tensor_data[self.input_name[1]]        
+
+        inp1_shape = list(self.input_data1.shape)
+        inp2_shape = list(self.input_data2.shape)
+        if len(inp1_shape) <3:
+            inp1_shape.insert(0,1)
+        if len(inp2_shape) <3:
+            inp2_shape.insert(0,1)            
+        inp1_range = range(inp1_shape[-3])
+        inp2_range = range(inp2_shape[-3])
+        max_len = max(len(inp1_range),len(inp2_range))
+        if max_len > len(inp1_range):
+            inp1_range=[0]*max_len
+        if max_len > len(inp2_range):
+            inp2_range=[0]*max_len
+        offset1=len(inp1_shape)*[0]
+        offset2=len(inp2_shape)*[0]
+        offset3=max(len(inp2_shape),len(inp1_shape))*[0]                
+        for i,j in zip(inp1_range,inp2_range):
+            offset1[-3]=i
+            offset2[-3]=j
+            offset3[-3]=max(i,j)
+            if len(self.input_data1.shape) > 2 :
+                self.unif[0] = self.input_data1.addresses()[tuple(offset1)]
+            if len(self.input_data2.shape) > 2:
+                self.unif[2] = self.input_data2.addresses()[tuple(offset2)]
+            if len(self.output_data.shape) > 2:                
+                self.unif[4] = self.output_data.addresses()[tuple(offset3)]
+            self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)
+            
+        else:
+            self.drv.execute(self.code, self.unif.addresses()[0], thread=self.num_qpus)        
+
         gpu = self.output_data
-        print(cpu)
-        print(gpu)
-        print('maximum relative error : {:.4e}'.format(float(np.max(np.abs(cpu-gpu)/cpu))))        
-        # print(self.output_data)
-        # print(self.input_data1@self.input_data2)
-        if self.p_mod > 0 or self.r_mod > 0:
-            self.tensor_data[self.output_name]=self.output_data[...,:self.p,:self.r]
-        print(self.input_data1.dtype,self.input_data2.dtype,self.output_data.dtype)
+        # cpu = self.input_data1@self.input_data2
+        # print('maximum relative error : {:.4e}'.format(float(np.max(np.abs(cpu-gpu)/np.maximum(np.abs(cpu),1e-10)))))        
+        self.tensor_data[self.output_name][:] = gpu[...,:self.p,:self.r]
+
 
 
 
@@ -149,11 +160,11 @@ def kernel(asm, num_qpus):
     
     for i in range(64):
         mov(rf[i],0.0)
-    
     #=======numqpu=8 to  thx=4========
-    #                    thy=2
+    #                   thy=2
     #if(thx-4>=0){thx-=4}
     #B set
+    
     eidx(r4)
     sub(r1,r0,4,cond='pushn')
     mov(r1,r0,cond='ifa')
@@ -161,9 +172,11 @@ def kernel(asm, num_qpus):
     umul24(r1,r5,r1)
     sub(null, r4, B_ADDR, cond='pushz')
     add(r2, r2, r1, cond='ifa')    
+
     
     #numqpu%4
     #A set
+    
     shr(r3,r0,2)
     rotate(broadcast,r2,-HBLOCK)
     umul24(r3,r5,r3)
@@ -178,8 +191,7 @@ def kernel(asm, num_qpus):
     #C set
     add(r1,r1,r0)
     sub(null, r4, C_ADDR, cond='pushz')
-    add(r2, r2, r1, cond='ifa')    
-    #==================================
+    add(r2, r2, r1, cond='ifa')        
     iidx=rf50
     jidx=rf51
     kidx=rf52
@@ -189,118 +201,115 @@ def kernel(asm, num_qpus):
     b_cur=rf56
     c_cur=rf57
     simd_stp=rf58
+    ldi128=rf59
+    ldi16=rf60
+    mov(ldi128,1)
+    shl(ldi128,ldi128,7)
+    mov(ldi16,1)
+    shl(ldi16,ldi16,4)
+    #simd_stp = 16 x 4
     mov(simd_stp,1)
     shl(simd_stp,simd_stp,6)
-    #istp=16*
     mov(iidx,0)
+
     with loop as iloop:
-        #iidx x 16 x A_STR + (A_ADDR + (eidx x A_STR))
+        #set a_cur
+        #16 x iidx x A_STR x eidx + A_ADDR
+        # mov(r0,1)
+        # shl(r0,r0,4)
+        umul24(r0,ldi16,iidx)
         eidx(a_cur)
         rotate(broadcast,r2,-A_STR)
         umul24(a_cur,a_cur,r5)
-        mov(r0,1)
-        shl(r0,r0,4)
-        umul24(r0,r0,r5)
-        umul24(r0,r0,iidx)
+        umul24(r0,r5,r0)
+        add(a_cur,a_cur,r0)
         rotate(broadcast,r2,-A_ADDR)
         add(a_cur,a_cur,r5)
-        add(a_cur,a_cur,r0)
         mov(jidx,0)
         with loop as jloop:
+            #set b_cur
+            #1 : 32 x 4(float) x jidx
+            umul24(r0,ldi128,jidx)
+
+
+            #2 : eidx x 4 + B_ADDR
             mov(kidx,0)
-            #(eidx x 4  + B_ADDR) + jidx x 32 x 4
             eidx(b_cur)
             shl(b_cur,b_cur,2)
-            mov(r0,1)
-            shl(r0,r0,7)
-            umul24(r0,r0,jidx)
             rotate(broadcast,r2,-B_ADDR)
             add(b_cur,b_cur,r5)
+
+            #1 + 2
             add(b_cur,b_cur,r0)
-            
+
             with loop as kloop:
-                add(kidx,kidx,1)
                 mov(tmua,a_cur,sig=thrsw)
-                nop()
-                nop()
+                add(a_cur,a_cur,4) #nop()
+                add(kidx,kidx,1) #nop()
                 nop(sig=ldtmu(r3))
                 for lj in range(2):
-                    stp=lj*16
+                    stp = lj*16
                     mov(tmua,b_cur,sig=thrsw)
-                    nop()
+                    if lj==0:
+                        add(b_cur,b_cur,simd_stp) #nop()
+                    else:
+                        nop()
                     nop()
                     nop(sig=ldtmu(r4))
-                    for li in range(16):
-                        rotate(broadcast,r3,-li)
-                        fmul(r0,r5,r4)
-                        fadd(rf[stp+li],rf[stp+li],r0)
-                        #add 1row and colmun
-                    add(b_cur,b_cur,simd_stp)
-
-                add(a_cur,a_cur,4)
-                #調整
-                sub(b_cur,b_cur,simd_stp)
-                #str-16
-                rotate(broadcast,r2,-B_STR)
-                sub(r5,r5,simd_stp)
+                    rotate(broadcast,r4,0)
+                    fmul(r0,r5,r3)                    
+                    for li in range(15):
+                        rotate(broadcast,r4,-(li+1))
+                        fadd(rf[stp+li],rf[stp+li],r0).fmul(r0,r5,r3)
+                    fadd(rf[stp+15],rf[stp+15],r0)
                 
-                add(b_cur,b_cur,r5)
-                rotate(broadcast,r2,-K_SIZE)
-                sub(null,r5,kidx,cond = 'pushz')
-                #mov(null,0,cond = 'pushz')
-                kloop.b(cond='anyna')
-                nop()
-                nop()
-                nop()
 
-            #Write C
-            #set C addr
-            #iidx x 16 x B_STR 
-            mov(r3,1)
-            shl(r3,r3,4)
+                rotate(broadcast,r2,-K_SIZE)
+                sub(null,r5,kidx,cond='pushz')
+                kloop.b(cond='anyna')
+                sub(b_cur,b_cur,simd_stp) #nop()
+                rotate(broadcast,r2,-B_STR) #nop()
+                add(b_cur,b_cur,r5) #nop() 
+
+            # 32 x 4(float) x jidx
+            # mov(r0,1)
+            # shl(r0,r0,4)
+            umul24(r0,ldi16,iidx)
+            eidx(c_cur)
             rotate(broadcast,r2,-B_STR)
-            umul24(c_cur,r3,r5)
-            umul24(c_cur,c_cur,iidx)
-            #jidx x 32 x 4
-            shl(r3,r3,3)
-            umul24(r3,r3,jidx)
-            add(c_cur,r3,c_cur)
+            umul24(c_cur,c_cur,r5)
+            umul24(r0,r5,r0)
+            add(c_cur,c_cur,r0)
+            
+            # mov(r0,1)
+            # shl(r0,r0,7)
+            umul24(r0,ldi128,jidx)            
             rotate(broadcast,r2,-C_ADDR)
             add(c_cur,c_cur,r5)
-            eidx(r3)
-            shl(r3,r3,2)
-            add(c_cur,c_cur,r3)
-            rotate(broadcast,r2,-B_STR)
-            for li in range(16):
+            add(c_cur,c_cur,r0)
+            for li in range(32):
+                # fmul(r3,r3,2.0)
+                # mov(tmud,r3)
                 mov(tmud,rf[li])
-                #mov(tmud,1.0)
                 mov(tmua,c_cur)
+                add(c_cur,c_cur,4)
                 mov(rf[li],0.0)
                 tmuwt()
-
-                mov(tmud,rf[16+li])
-                add(tmua,c_cur,simd_stp)
-                mov(rf[16+li],0.0)
-                tmuwt()
-                add(c_cur,c_cur,r5)
-
-            add(jidx,jidx,1)    
             rotate(broadcast,r2,-J_SIZE)
+            add(jidx,jidx,1)
             sub(null,r5,jidx,cond = 'pushz')
-            #mov(null,0,cond = 'pushz')
             jloop.b(cond='anyna')
+            rotate(broadcast,r2,-A_STR) #nop()
+            sub(a_cur,a_cur,r5) #nop()
             nop()
-            nop()
-            nop()
-        #I_SIZE-iidx==0
         add(iidx,iidx,1)
         rotate(broadcast,r2,-I_SIZE)
         sub(null,r5,iidx,cond = 'pushz')
-        #mov(null,0,cond = 'pushz')
         iloop.b(cond='anyna')
         nop()
         nop()
         nop()
+        
     barrierid(syncb, sig=thrsw)
     nop()
     nop()
@@ -311,7 +320,4 @@ def kernel(asm, num_qpus):
     nop(sig=thrsw)
     nop()
     nop()
-    nop()        
-
-
-
+    nop()
