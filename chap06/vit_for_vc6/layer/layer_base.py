@@ -9,6 +9,12 @@ class Layer:
         self.attrs = {attr.name: onnx.helper.get_attribute_value(attr) for attr in self.node.attribute}
         self.output_name = self.node.output[0]
         self.init_names = {tensor.name for tensor in model.graph.initializer}
+    def alloc_gpu_for_initializer(self,tensor_name):
+        if tensor_name in self.init_names:
+            cpu_w = self.tensor_data[tensor_name]
+            self.tensor_data[tensor_name] = self.drv.alloc(cpu_w.shape,cpu_w.dtype)
+            self.tensor_data[tensor_name][:]=cpu_w
+        return self.tensor_data[tensor_name]
         
 
 class Eltwise_Layer(Layer):
