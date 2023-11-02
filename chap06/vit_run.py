@@ -1,3 +1,4 @@
+import argparse
 import vit_for_vc6
 import onnxruntime
 import onnx
@@ -47,6 +48,10 @@ def preprocess(img):
     img=img.astype(np.float32)
     return img
 
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--use_gpu', help='Using GPU',action='store_true')
+args = parser.parse_args()
 print("Loading model...",end='')
 model_path = 'models/vision_transformerb32.onnx'
 model = onnx.load(model_path)
@@ -59,7 +64,7 @@ img = preprocess(img)
 #vit_for_vc6
 print("Initializing...",end='')
 sys.stdout.flush()
-vfv_sess = vit_for_vc6.Inf(model,use_gpu=True)
+vfv_sess = vit_for_vc6.Inf(model,use_gpu=args.use_gpu)
 
 #onnxruntime
 ort_sess = onnxruntime.InferenceSession(model_path)
@@ -85,7 +90,7 @@ imagenet_labels = download_imagenet_labels()
 pred = imagenet_labels[np.argmax(result_vfv)]
 print("Predicted label : {}".format(pred))
 print("onnxruntime time:{:.2f}sec".format(ort_time))
-print("vc6 time:{:.2f}sec".format(vfv_time))
+print("vit_for_vc6 time:{:.2f}sec".format(vfv_time))
 
 #計算誤差
 print('maximum absolute error : {:.4e}'.format(float(np.max(np.abs(result_vfv-result_ort)))))
