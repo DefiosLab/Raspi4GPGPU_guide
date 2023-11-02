@@ -84,8 +84,8 @@ vfv_time=ed-st
 imagenet_labels = download_imagenet_labels()
 pred = imagenet_labels[np.argmax(result_vfv)]
 print("Predicted label : {}".format(pred))
-print("onnxruntime time:{:.2f}".format(ort_time))
-print("vc6 time:{:.2f}".format(vfv_time))
+print("onnxruntime time:{:.2f}sec".format(ort_time))
+print("vc6 time:{:.2f}sec".format(vfv_time))
 
 #計算誤差
 print('maximum absolute error : {:.4e}'.format(float(np.max(np.abs(result_vfv-result_ort)))))
