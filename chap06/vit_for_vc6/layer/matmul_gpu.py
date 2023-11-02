@@ -274,7 +274,7 @@ def kernel(asm, num_qpus):
                     mov(tmua,a_cur,sig=thrsw)
                     add(a_cur,a_cur,4) #nop()
                     add(kidx,kidx,1) #nop()
-                    nop(sig=ldtmu(r3))
+                    nop(sig=ldtmu(r4))
                     for lj in range(2):
                         stp = lj*16
                         mov(tmua,b_cur,sig=thrsw)
@@ -283,15 +283,14 @@ def kernel(asm, num_qpus):
                         else:
                             nop()
                         nop()
-                        nop(sig=ldtmu(r4))
+                        nop(sig=ldtmu(r3))
+                        # rotate(broadcast,r4,0)
                         rotate(broadcast,r4,0)
                         fmul(r0,r5,r3)                    
                         for li in range(15):
                             rotate(broadcast,r4,-(li+1))
                             fadd(rf[stp+li],rf[stp+li],r0).fmul(r0,r5,r3)
                         fadd(rf[stp+15],rf[stp+15],r0)
-
-
                     rotate(broadcast,r2,-LOOP_K)
                     sub(null,r5,kidx,cond='pushz')
                     kloop.b(cond='anyna')
@@ -300,19 +299,17 @@ def kernel(asm, num_qpus):
                     add(b_cur,b_cur,r5) #nop() 
 
                 # 32 x 4(float) x jidx
-                # mov(r0,1)
-                # shl(r0,r0,4)
                 umul24(r0,ldi16,iidx)
-                eidx(c_cur)
                 rotate(broadcast,r2,-B_STR)
-                umul24(c_cur,c_cur,r5)
+                umul24(r0,r5,r0)
+
+                eidx(c_cur)
+                umul24(c_cur,c_cur,4)
+
                 umul24(r1,r1,r5) # 端数処理
 
-                umul24(r0,r5,r0)
                 add(c_cur,c_cur,r0)
 
-                # mov(r0,1)
-                # shl(r0,r0,7)
                 umul24(r0,ldi128,jidx)
                 add(r0,r0,rf48)
                 rotate(broadcast,r2,-C_ADDR)
@@ -320,14 +317,20 @@ def kernel(asm, num_qpus):
                 add(c_cur,c_cur,r0)
                 add(c_cur,c_cur,r1) #端数処理
 
-                for li in range(32):
-                    # fmul(r3,r3,2.0)
-                    # mov(tmud,r3)
+                rotate(broadcast,r2,-B_STR)
+                sub(r0,r5,simd_stp)
+                for li in range(16):
                     mov(tmud,rf[li])
                     mov(tmua,c_cur)
-                    add(c_cur,c_cur,4)
+                    add(c_cur,c_cur,simd_stp)
                     mov(rf[li],0.0)
                     tmuwt()
+                    mov(tmud,rf[li + 16])
+                    mov(tmua,c_cur)
+                    add(c_cur,c_cur,r0)
+                    mov(rf[li+16],0.0)
+                    tmuwt()
+
                 rotate(broadcast,r2,-LOOP_J)
                 add(jidx,jidx,1)
                 sub(null,r5,jidx,cond = 'pushz')
@@ -335,6 +338,7 @@ def kernel(asm, num_qpus):
                 rotate(broadcast,r2,-A_STR) #nop()
                 sub(a_cur,a_cur,r5) #nop()
                 nop()
+
             add(iidx,iidx,1)
             rotate(broadcast,r2,-LOOP_I)
             sub(null,r5,iidx,cond = 'pushz')
