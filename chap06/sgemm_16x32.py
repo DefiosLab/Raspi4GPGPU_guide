@@ -21,15 +21,15 @@ def kernel(asm, num_qpus):
     C_ADDR=4
     HBLOCK=5
     WBLOCK=6
-    I_SIZE=7
-    J_SIZE=8
-    K_SIZE=9
+    LOOP_I=7
+    LOOP_J=8
+    LOOP_K=9
     FRAC_W=10
     FRAC_H=11
     
     
     eidx(r0).mov(r2, 0)
-    for idx in [A_ADDR, A_STR, B_ADDR, B_STR, C_ADDR, HBLOCK, WBLOCK, I_SIZE, J_SIZE, K_SIZE, FRAC_W, FRAC_H]:
+    for idx in [A_ADDR, A_STR, B_ADDR, B_STR, C_ADDR, HBLOCK, WBLOCK, LOOP_I, LOOP_J, LOOP_K, FRAC_W, FRAC_H]:
         nop(sig=ldunifrf(r5))
         sub(null, r0, idx, cond='pushz')
         mov(r2, r5, cond='ifa')
@@ -180,7 +180,7 @@ def kernel(asm, num_qpus):
                 mov(tmua,a_cur,sig=thrsw)
                 add(a_cur,a_cur,4) #nop()
                 add(kidx,kidx,1) #nop()
-                nop(sig=ldtmu(r3))
+                nop(sig=ldtmu(r4))
                 for lj in range(2):
                     stp = lj*16
                     mov(tmua,b_cur,sig=thrsw)
@@ -189,36 +189,35 @@ def kernel(asm, num_qpus):
                     else:
                         nop()
                     nop()
-                    nop(sig=ldtmu(r4))
+                    nop(sig=ldtmu(r3))
+                    # rotate(broadcast,r4,0)
                     rotate(broadcast,r4,0)
                     fmul(r0,r5,r3)                    
                     for li in range(15):
                         rotate(broadcast,r4,-(li+1))
                         fadd(rf[stp+li],rf[stp+li],r0).fmul(r0,r5,r3)
                     fadd(rf[stp+15],rf[stp+15],r0)
-                
-
-                rotate(broadcast,r2,-K_SIZE)
+                rotate(broadcast,r2,-LOOP_K)
                 sub(null,r5,kidx,cond='pushz')
                 kloop.b(cond='anyna')
                 sub(b_cur,b_cur,simd_stp) #nop()
                 rotate(broadcast,r2,-B_STR) #nop()
                 add(b_cur,b_cur,r5) #nop() 
+                        
+
 
             # 32 x 4(float) x jidx
-            # mov(r0,1)
-            # shl(r0,r0,4)
             umul24(r0,ldi16,iidx)
-            eidx(c_cur)
             rotate(broadcast,r2,-B_STR)
-            umul24(c_cur,c_cur,r5)
+            umul24(r0,r5,r0)
+            
+            eidx(c_cur)
+            umul24(c_cur,c_cur,4)
+            
             umul24(r1,r1,r5) # 端数処理
             
-            umul24(r0,r5,r0)
             add(c_cur,c_cur,r0)
             
-            # mov(r0,1)
-            # shl(r0,r0,7)
             umul24(r0,ldi128,jidx)
             add(r0,r0,rf49)
             rotate(broadcast,r2,-C_ADDR)
@@ -226,23 +225,30 @@ def kernel(asm, num_qpus):
             add(c_cur,c_cur,r0)
             add(c_cur,c_cur,r1) #端数処理
 
-            for li in range(32):
-                # fmul(r3,r3,2.0)
-                # mov(tmud,r3)
+            rotate(broadcast,r2,-B_STR)
+            sub(r0,r5,simd_stp)
+            for li in range(16):
                 mov(tmud,rf[li])
                 mov(tmua,c_cur)
-                add(c_cur,c_cur,4)
+                add(c_cur,c_cur,simd_stp)
                 mov(rf[li],0.0)
                 tmuwt()
-            rotate(broadcast,r2,-J_SIZE)
+                mov(tmud,rf[li + 16])
+                mov(tmua,c_cur)
+                add(c_cur,c_cur,r0)
+                mov(rf[li+16],0.0)
+                tmuwt()
+                
+            rotate(broadcast,r2,-LOOP_J)
             add(jidx,jidx,1)
             sub(null,r5,jidx,cond = 'pushz')
             jloop.b(cond='anyna')
             rotate(broadcast,r2,-A_STR) #nop()
             sub(a_cur,a_cur,r5) #nop()
             nop()
+            
         add(iidx,iidx,1)
-        rotate(broadcast,r2,-I_SIZE)
+        rotate(broadcast,r2,-LOOP_I)
         sub(null,r5,iidx,cond = 'pushz')
         iloop.b(cond='anyna')
         nop()
@@ -345,13 +351,14 @@ def main():
         for i in range(iteration):
             st = time.time()
             C_ref=np.dot(A,B)
+            # C_ref = np.zeros(C.shape)
             ed =time.time()
             cpu_time += ed-st
         average_cpu_time = cpu_time /iteration
             
         def gflops(time):
             return p * q * r * 2 / average_gpu_time * 1e-9
-        
+        print(np.count_nonzero(C != 1))
         print(f'GPU time:   {average_gpu_time*1000:.2f} msec')
         print(f'CPU time:   {average_cpu_time*1000:.2f} msec')
         print(f'{gflops(gpu_time):.2f}GFLOPS')
