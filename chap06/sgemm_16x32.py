@@ -357,11 +357,12 @@ def main():
         average_cpu_time = cpu_time /iteration
             
         def gflops(time):
-            return p * q * r * 2 / average_gpu_time * 1e-9
+            return p * q * r * 2 / time * 1e-9
         print(np.count_nonzero(C != 1))
         print(f'GPU time:   {average_gpu_time*1000:.2f} msec')
         print(f'CPU time:   {average_cpu_time*1000:.2f} msec')
-        print(f'{gflops(gpu_time):.2f}GFLOPS')
+        print(f'GPU FLOPS:  {gflops(average_gpu_time):.2f}GFLOPS')
+        print(f'CPU FLOPS:  {gflops(average_cpu_time):.2f}GFLOPS')        
         print('minimum absolute error: {:.4e}'.format(
             float(np.min(np.abs(C_ref - C)))))
         print('maximum absolute error: {:.4e}'.format(
