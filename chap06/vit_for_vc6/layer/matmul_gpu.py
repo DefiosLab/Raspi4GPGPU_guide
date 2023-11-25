@@ -286,7 +286,7 @@ def kernel(asm, num_qpus):
                     rotate(broadcast,r2,-B_STR) #nop()
                     add(b_cur,b_cur,r5) #nop() 
 
-                # 32 x 4(float) x jidx
+
                 umul24(r0,ldi16,iidx)
                 rotate(broadcast,r2,-B_STR)
                 umul24(r0,r5,r0)
@@ -298,6 +298,7 @@ def kernel(asm, num_qpus):
 
                 add(c_cur,c_cur,r0)
 
+                # 32 x 4(float) x jidx                
                 umul24(r0,ldi128,jidx)
                 add(r0,r0,rf48)
                 rotate(broadcast,r2,-C_ADDR)

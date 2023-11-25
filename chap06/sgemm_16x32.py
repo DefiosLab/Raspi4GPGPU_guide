@@ -199,7 +199,7 @@ def kernel(asm, num_qpus):
                         
 
 
-            # 32 x 4(float) x jidx
+
             umul24(r0,ldi16,iidx)
             rotate(broadcast,r2,-B_STR)
             umul24(r0,r5,r0)
@@ -210,7 +210,8 @@ def kernel(asm, num_qpus):
             umul24(r1,r1,r5) # 端数処理
             
             add(c_cur,c_cur,r0)
-            
+
+            # 32 x 4(float) x jidx            
             umul24(r0,ldi128,jidx)
             add(r0,r0,rf49)
             rotate(broadcast,r2,-C_ADDR)
