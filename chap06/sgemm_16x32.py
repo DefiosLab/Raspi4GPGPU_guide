@@ -114,8 +114,6 @@ def kernel(asm, num_qpus):
     with loop as iloop:
         #set a_cur
         #16 x iidx x A_STR x eidx + A_ADDR
-        # mov(r0,1)
-        # shl(r0,r0,4)
         umul24(r0,ldi16,iidx)
 
         #端数処理 
@@ -135,8 +133,6 @@ def kernel(asm, num_qpus):
         
         L.fraction_i_end
         
-        # eidx(a_cur)
-        # rotate(broadcast,r2,-A_STR) 
         umul24(a_cur,a_cur,r5)
         umul24(r0,r5,r0)
         add(a_cur,a_cur,r0)
@@ -167,8 +163,6 @@ def kernel(asm, num_qpus):
             L.fraction_j_end
             
             #2 : eidx x 4 + B_ADDR
-            # mov(kidx,0)
-            # eidx(b_cur)
             shl(b_cur,b_cur,2)
             rotate(broadcast,r2,-B_ADDR)
             add(b_cur,b_cur,r5)
@@ -190,7 +184,6 @@ def kernel(asm, num_qpus):
                         nop()
                     nop()
                     nop(sig=ldtmu(r3))
-                    # rotate(broadcast,r4,0)
                     rotate(broadcast,r4,0)
                     fmul(r0,r5,r3)                    
                     for li in range(15):
@@ -351,7 +344,6 @@ def main():
         for i in range(iteration):
             st = time.time()
             C_ref=np.dot(A,B)
-            # C_ref = np.zeros(C.shape)
             ed =time.time()
             cpu_time += ed-st
         average_cpu_time = cpu_time /iteration

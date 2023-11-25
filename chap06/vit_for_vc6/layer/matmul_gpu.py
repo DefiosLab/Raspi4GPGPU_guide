@@ -49,8 +49,6 @@ class MatMul_gpu(Layer):
         k_idx=self.q
         
         #3次元対応
-        # inp1_shape = list(self.input_data1.shape)
-        # data2_shape = list(self.input_data2.shape)
         if len(data1_shape) <3:
             data1_shape.insert(0,1)
         if len(data2_shape) <3:
@@ -86,10 +84,7 @@ class MatMul_gpu(Layer):
         self.code = self.drv.program(kernel, num_qpus=self.num_qpus)        
             
     def run(self):
-        self.drv.execute(self.code, self.unif.addresses()[0], timeout_sec=100, thread=self.num_qpus)
-        # gpu = self.output_data
-        # cpu = self.input_data1@self.input_data2
-        # print('maximum relative error : {:.4e}'.format(float(np.max(np.abs(cpu-gpu)/np.maximum(np.abs(cpu),1e-10)))))        
+        self.drv.execute(self.code, self.unif.addresses()[0], timeout_sec=100, thread=self.num_qpus)   
 
 
 
@@ -208,8 +203,6 @@ def kernel(asm, num_qpus):
         with loop as iloop:
             #set a_cur
             #16 x iidx x A_STR x eidx + A_ADDR
-            # mov(r0,1)
-            # shl(r0,r0,4)
             umul24(r0,ldi16,iidx)
 
             #端数処理 
@@ -229,8 +222,6 @@ def kernel(asm, num_qpus):
 
             L.fraction_i_end
 
-            # eidx(a_cur)
-            # rotate(broadcast,r2,-A_STR) 
             umul24(a_cur,a_cur,r5)
             umul24(r0,r5,r0)
             add(a_cur,a_cur,r0)
@@ -261,8 +252,6 @@ def kernel(asm, num_qpus):
                 L.fraction_j_end
 
                 #2 : eidx x 4 + B_ADDR
-                # mov(kidx,0)
-                # eidx(b_cur)
                 shl(b_cur,b_cur,2)
                 rotate(broadcast,r2,-B_ADDR)
                 add(b_cur,b_cur,r5)
@@ -284,7 +273,6 @@ def kernel(asm, num_qpus):
                             nop()
                         nop()
                         nop(sig=ldtmu(r3))
-                        # rotate(broadcast,r4,0)
                         rotate(broadcast,r4,0)
                         fmul(r0,r5,r3)                    
                         for li in range(15):
